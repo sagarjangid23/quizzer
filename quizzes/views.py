@@ -5,6 +5,8 @@ from .serializers import QuizSerializer, QuizListSerializer, QuizResultSerialize
 from .models import Quiz, QuizAttempt
 from rest_framework import status
 from rest_framework.response import Response
+import time
+from datetime import timedelta
 
 
 class QuizListView(APIView):
@@ -66,22 +68,37 @@ class ActiveQuizAPIView(APIView):
 
 class QuizResultAPIView(APIView):
     
-    @method_decorator(cache_page(120))
     def get(self, request, id):
         """
         API view to get the result of a quiz.
         """
         try:
             quiz_attempt = QuizAttempt.objects.get(quiz__id=id)
-            
-            serializer = QuizResultSerializer(quiz_attempt)
-            
-            result = {
-                'success': True,
-                'result_message': 'Congratulations! You passed the quiz' if quiz_attempt.score >= 40 else 'Oops: You failed the quiz',
-                'result': serializer.data
-            }
-            
-            return Response(result, status=status.HTTP_200_OK)
         except QuizAttempt.DoesNotExist:
             return Response({'success': False, 'data': {"message": "Quiz result not found"}}, status=status.HTTP_404_NOT_FOUND)
+        
+        quiz = quiz_attempt.quiz
+        
+        if quiz.status == Quiz.StatusEnum.INACTIVE.value:
+            return Response({'success': False, 'data': {"message": "Result not available for an Inactive quiz"}}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        
+        elif quiz.status == Quiz.StatusEnum.ACTIVE.value:
+            return Response({'success': False, 'data': {"message": "Quiz not ended yet"}}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        
+        current_time = time.time()
+        end_time = quiz.end_date.timestamp()
+        five_minute_window = timedelta(minutes=5).total_seconds()
+        
+        if end_time <= current_time <= end_time + five_minute_window:
+            # Display a message indicating the result is being prepared
+            return Response({'success': True, 'data': {'message': "Please wait. We are preparing your result"}}, status=status.HTTP_202_ACCEPTED)
+        
+        serializer = QuizResultSerializer(quiz_attempt)
+        
+        result_message = 'Congratulations! You passed the quiz' if quiz_attempt.score >= 40 else 'Oops: You failed the quiz'
+        result = {
+            'success': True,
+            'result_message': result_message,
+            'result': serializer.data
+        }
+        return Response(result, status=status.HTTP_200_OK)
